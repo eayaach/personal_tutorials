@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Claude Code — Agent Loop</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d0d0d;
+      color: #f0f0f0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .deck {
+      width: 100%;
+      height: 100vh;
+      position: relative;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 4rem;
+      opacity: 0;
+      transform: translateX(60px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      pointer-events: none;
+    }
+
+    .slide.active {
+      opacity: 1;
+      transform: translateX(0);
+      pointer-events: all;
+    }
+
+    .slide.exit {
+      opacity: 0;
+      transform: translateX(-60px);
+    }
+
+    /* ── slide-specific backgrounds ── */
+    .slide-1 { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); }
+    .slide-2 { background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%); }
+    .slide-3 { background: linear-gradient(135deg, #1a0533 0%, #2d1b69 100%); }
+    .slide-4 { background: linear-gradient(135deg, #0a2a1a 0%, #1a4a2a 100%); }
+    .slide-5 { background: linear-gradient(135deg, #2a1a0a 0%, #4a2a0a 100%); }
+    .slide-6 { background: linear-gradient(135deg, #1a0a2a 0%, #3a1a4a 100%); }
+    .slide-7 { background: linear-gradient(135deg, #0a1a2a 0%, #0d0d0d 100%); }
+
+    /* ── typography ── */
+    .label {
+      font-size: 0.75rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 5vw, 3.5rem);
+      font-weight: 700;
+      line-height: 1.1;
+      text-align: center;
+    }
+
+    h2 {
+      font-size: clamp(1.5rem, 3vw, 2.2rem);
+      font-weight: 700;
+      margin-bottom: 1.5rem;
+      text-align: center;
+    }
+
+    .subtitle {
+      font-size: 1.1rem;
+      color: #aaa;
+      margin-top: 1rem;
+      text-align: center;
+    }
+
+    /* ── loop diagram ── */
+    .loop {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 2rem;
+    }
+
+    .step {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 12px;
+      padding: 0.8rem 1.2rem;
+      font-size: 0.95rem;
+      text-align: center;
+      min-width: 110px;
+    }
+
+    .step .icon { font-size: 1.5rem; display: block; margin-bottom: 0.3rem; }
+
+    .arrow {
+      font-size: 1.4rem;
+      color: #555;
+    }
+
+    /* ── cards grid ── */
+    .cards {
+      display: grid;
+      gap: 1rem;
+      width: 100%;
+      max-width: 800px;
+      margin-top: 1.5rem;
+    }
+
+    .cards.cols-2 { grid-template-columns: 1fr 1fr; }
+    .cards.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+    .card {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 1.2rem 1.4rem;
+    }
+
+    .card h3 {
+      font-size: 1rem;
+      margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .card p, .card ul {
+      font-size: 0.85rem;
+      color: #aaa;
+      line-height: 1.6;
+    }
+
+    .card ul { padding-left: 1.2rem; }
+
+    /* ── highlight pill ── */
+    .pill {
+      display: inline-block;
+      padding: 0.2rem 0.7rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin: 0.2rem;
+    }
+
+    .pill-blue  { background: #1e40af44; color: #93c5fd; border: 1px solid #3b82f644; }
+    .pill-green { background: #14532d44; color: #86efac; border: 1px solid #22c55e44; }
+    .pill-red   { background: #7f1d1d44; color: #fca5a5; border: 1px solid #ef444444; }
+    .pill-amber { background: #78350f44; color: #fcd34d; border: 1px solid #f59e0b44; }
+
+    /* ── big number ── */
+    .big { font-size: 5rem; font-weight: 800; line-height: 1; }
+
+    /* ── permission table ── */
+    .table {
+      width: 100%;
+      max-width: 700px;
+      border-collapse: collapse;
+      margin-top: 1.5rem;
+      font-size: 0.9rem;
+    }
+
+    .table th {
+      text-align: left;
+      padding: 0.6rem 1rem;
+      color: #888;
+      border-bottom: 1px solid #333;
+      font-weight: 500;
+    }
+
+    .table td {
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #222;
+      color: #ccc;
+    }
+
+    /* ── nav ── */
+    .nav {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      z-index: 100;
+    }
+
+    .nav button {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: #fff;
+      padding: 0.5rem 1.4rem;
+      border-radius: 999px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .nav button:hover { background: rgba(255,255,255,0.15); }
+    .nav button:disabled { opacity: 0.3; cursor: default; }
+
+    .dots {
+      display: flex;
+      gap: 0.4rem;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #444;
+      transition: background 0.2s;
+      cursor: pointer;
+    }
+
+    .dot.active { background: #fff; }
+
+    .slide-num {
+      position: fixed;
+      top: 1.5rem;
+      right: 2rem;
+      font-size: 0.8rem;
+      color: #555;
+    }
+  </style>
+</head>
+<body>
+
+<div class="deck" id="deck">
+
+  <!-- 1. Title -->
+  <div class="slide slide-1 active">
+    <div class="label">Claude Code</div>
+    <h1>The Agent Loop</h1>
+    <p class="subtitle">How I think, act, and respond to your requests</p>
+    <div style="margin-top:2.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; justify-content:center;">
+      <span class="pill pill-blue">Read</span>
+      <span class="pill pill-green">Execute</span>
+      <span class="pill pill-amber">Observe</span>
+      <span class="pill pill-red">Decide</span>
+    </div>
+  </div>
+
+  <!-- 2. The loop -->
+  <div class="slide slide-2">
+    <div class="label">Core concept</div>
+    <h2>The Agent Loop</h2>
+    <p style="color:#aaa; text-align:center; max-width:560px;">
+      I don't respond in a single pass. I loop — thinking, using tools, observing results — until the task is done.
+    </p>
+    <div class="loop">
+      <div class="step"><span class="icon">💬</span>User Input</div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="icon">🧠</span>Think</div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="icon">🔧</span>Use Tool</div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="icon">👁️</span>Observe</div>
+      <div class="arrow">→</div>
+      <div class="step"><span class="icon">✅</span>Respond<br><small style="color:#888">or loop again</small></div>
+    </div>
+  </div>
+
+  <!-- 3. Thinking phase -->
+  <div class="slide slide-3">
+    <div class="label">Phase 1</div>
+    <h2>Think</h2>
+    <div class="cards cols-2" style="max-width:700px;">
+      <div class="card">
+        <h3>🎯 Understand intent</h3>
+        <p>Parse what you actually want, not just what you literally said.</p>
+      </div>
+      <div class="card">
+        <h3>🗂️ Check memory</h3>
+        <p>Recall project context, conventions, and previous decisions.</p>
+      </div>
+      <div class="card">
+        <h3>📋 Plan steps</h3>
+        <p>Break the task into a sequence of concrete actions before acting.</p>
+      </div>
+      <div class="card">
+        <h3>⚠️ Assess risk</h3>
+        <p>Flag destructive or irreversible actions before executing them.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Tools -->
+  <div class="slide slide-4">
+    <div class="label">Phase 2</div>
+    <h2>Use Tools</h2>
+    <div class="cards cols-3">
+      <div class="card">
+        <h3>📁 Files</h3>
+        <ul>
+          <li>Read</li>
+          <li>Write</li>
+          <li>Edit</li>
+          <li>Glob / Grep</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>💻 Shell</h3>
+        <ul>
+          <li>Bash commands</li>
+          <li>Run tests</li>
+          <li>Install packages</li>
+          <li>Git operations</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>🌐 Web</h3>
+        <ul>
+          <li>WebSearch</li>
+          <li>WebFetch</li>
+          <li>Read docs</li>
+          <li>Check APIs</li>
+        </ul>
+      </div>
+    </div>
+    <p style="color:#888; margin-top:1.5rem; font-size:0.85rem;">Each tool call result becomes input to the next thinking step.</p>
+  </div>
+
+  <!-- 5. Observe -->
+  <div class="slide slide-5">
+    <div class="label">Phase 3</div>
+    <h2>Observe & Decide</h2>
+    <div class="cards cols-2" style="max-width:700px;">
+      <div class="card">
+        <h3>✅ Success</h3>
+        <p>Result matches expectations — move to the next step or respond to user.</p>
+      </div>
+      <div class="card">
+        <h3>❌ Error</h3>
+        <p>Something failed — diagnose the cause, try a different approach.</p>
+      </div>
+      <div class="card">
+        <h3>🔄 Incomplete</h3>
+        <p>More steps needed — loop back and continue executing.</p>
+      </div>
+      <div class="card">
+        <h3>🛑 Blocked</h3>
+        <p>Cannot proceed safely or without missing info — ask the user.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Permissions -->
+  <div class="slide slide-6">
+    <div class="label">Safety layer</div>
+    <h2>Permission Model</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Action type</th>
+          <th>Reversible?</th>
+          <th>Behavior</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Read files, search code</td>
+          <td><span class="pill pill-green">Yes</span></td>
+          <td>Auto-approved, no prompt</td>
+        </tr>
+        <tr>
+          <td>Edit / write files</td>
+          <td><span class="pill pill-amber">Mostly</span></td>
+          <td>Requires permission mode allow</td>
+        </tr>
+        <tr>
+          <td>Run shell commands</td>
+          <td><span class="pill pill-amber">Mostly</span></td>
+          <td>Shown to user, can be denied</td>
+        </tr>
+        <tr>
+          <td>Git push, delete files, send messages</td>
+          <td><span class="pill pill-red">No</span></td>
+          <td>Always asks for confirmation</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 7. Tips -->
+  <div class="slide slide-7">
+    <div class="label">For you</div>
+    <h2>How to work with the loop</h2>
+    <div class="cards cols-2" style="max-width:700px;">
+      <div class="card">
+        <h3>🎯 Give goals, not steps</h3>
+        <p>"Add auth to the app" beats "edit this file, then that file..."</p>
+      </div>
+      <div class="card">
+        <h3>🐛 Paste full errors</h3>
+        <p>Stack traces and terminal output give me everything I need to debug.</p>
+      </div>
+      <div class="card">
+        <h3>✋ Deny risky tool calls</h3>
+        <p>If you deny a tool call I'll stop and ask, never force through.</p>
+      </div>
+      <div class="card">
+        <h3>🔁 Redirect freely</h3>
+        <p>If I go off track, just say so — I'll re-plan from where we are.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Navigation -->
+<div class="slide-num" id="slideNum">1 / 7</div>
+
+<div class="nav">
+  <button id="prev" disabled>← Prev</button>
+  <div class="dots" id="dots"></div>
+  <button id="next">Next →</button>
+</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide')
+  const prev = document.getElementById('prev')
+  const next = document.getElementById('next')
+  const dotsEl = document.getElementById('dots')
+  const slideNum = document.getElementById('slideNum')
+  let current = 0
+
+  // Build dots
+  slides.forEach((_, i) => {
+    const d = document.createElement('div')
+    d.className = 'dot' + (i === 0 ? ' active' : '')
+    d.addEventListener('click', () => goTo(i))
+    dotsEl.appendChild(d)
+  })
+
+  function goTo(index) {
+    slides[current].classList.remove('active')
+    slides[current].classList.add('exit')
+    setTimeout(() => slides[current].classList.remove('exit'), 400)
+
+    current = index
+    slides[current].classList.add('active')
+
+    document.querySelectorAll('.dot').forEach((d, i) =>
+      d.classList.toggle('active', i === current))
+
+    slideNum.textContent = `${current + 1} / ${slides.length}`
+    prev.disabled = current === 0
+    next.disabled = current === slides.length - 1
+  }
+
+  prev.addEventListener('click', () => current > 0 && goTo(current - 1))
+  next.addEventListener('click', () => current < slides.length - 1 && goTo(current + 1))
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next.click()
+    if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   prev.click()
+  })
+</script>
+</body>
+</html>
